@@ -74,5 +74,3 @@ API docs at http://localhost:8000/docs.
 - [ ] Search / catalog page
 - [ ] Compare page (3 phones side-by-side)
 - [ ] Analytics dashboard (Recharts)
-
-<!-- test -->
