@@ -1,0 +1,15 @@
+/* Keep global styles minimal so MUI theme controls UI consistently. */
+.app-shell {
+  min-height: 100vh;
+}
+
+.reveal-on-scroll {
+  opacity: 0;
+  transform: translateY(14px);
+  transition: opacity 240ms ease, transform 240ms ease;
+}
+
+.reveal-on-scroll.is-visible {
+  opacity: 1;
+  transform: translateY(0);
+}

@@ -1,0 +1,34 @@
+﻿# ============ Python ============
+backend/.venv/
+**/__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+*.egg-info/
+
+# ============ Node ============
+gadgetguru-frontend/node_modules/
+gadgetguru-frontend/dist/
+gadgetguru-frontend/.vite/
+gadgetguru-frontend/.next/
+
+# ============ Environment files (NEVER commit) ============
+.env
+.env.local
+.env.*.local
+**/.env
+backend/.env
+gadgetguru-frontend/.env
+
+# ============ Backups / temp ============
+**/.git_backup/
+*.log
+*.tmp
+
+# ============ OS / editor ============
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+
