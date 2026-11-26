@@ -9,6 +9,7 @@ from typing import Optional
 import psycopg
 
 from app.shortlist import shortlist
+from app.scoring import score_and_rank
 from app.rank import rank
 
 DATABASE_URL = os.getenv("DATABASE_URL")
@@ -47,15 +48,22 @@ def recommend(req: RecommendRequest):
         raise HTTPException(400, "price_min > price_max")
 
     with psycopg.connect(DATABASE_URL, sslmode="require") as conn:
-        rows = shortlist(conn, req.intent, req.price_min, req.price_max, limit=8)
-        if not rows:
+        # 1. SQL: cheap price-range filter → up to 200 candidates
+        candidates = shortlist(conn, req.intent, req.price_min, req.price_max, limit=200)
+        if not candidates:
             raise HTTPException(404, "No phones matched the price range")
+
+        # 2. Python scorer: intent-aware heuristic → top 10
+        top10 = score_and_rank(candidates, req.intent, top_n=10)
+
+        # 3. Gemini: re-rank the 10, pick best 3 with reasons
         try:
-            ranking = rank(rows, req.intent, req.user_text or "")
+            ranking = rank(top10, req.intent, req.user_text or "")
         except Exception as e:
             raise HTTPException(502, f"LLM ranking failed: {e}")
 
-        by_id = {r["id"]: r for r in rows}
+        # 4. Join Gemini's picks back to full phone data
+        by_id = {r["id"]: r for r in top10}
         picks = []
         for p in ranking.get("picks", []):
             phone = by_id.get(p["id"])
@@ -68,6 +76,8 @@ def recommend(req: RecommendRequest):
                 "price_min_inr": float(phone["price_min_inr"]),
                 "reason": p["reason"],
                 "specs": phone["specs"],
+                "score": phone.get("score"),
+                "scores": phone.get("scores"),
             })
         return {
             "intent": req.intent,
