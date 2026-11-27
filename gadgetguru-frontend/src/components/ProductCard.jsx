@@ -136,10 +136,37 @@ function ProductCard({ gadget, layout = "grid" }) {
           </span>
         </div>
 
+        {(gadget.rank != null ||
+          gadget.specScore != null ||
+          gadget.aiScore != null) && (
+          <div className="mt-3 grid grid-cols-3 gap-2">
+            <div className="rounded-lg bg-slate-50 p-3">
+              <p className="text-xs text-slate-500">AI Rank</p>
+              <p className="text-lg font-semibold text-slate-900">
+                {gadget.rank != null ? `#${gadget.rank}` : "--"}
+              </p>
+            </div>
+
+            <div className="rounded-lg bg-slate-50 p-3">
+              <p className="text-xs text-slate-500">Deterministic</p>
+              <p className="text-lg font-semibold text-slate-900">
+                {gadget.specScore != null ? gadget.specScore : "--"}
+              </p>
+            </div>
+
+            <div className="rounded-lg bg-slate-50 p-3">
+              <p className="text-xs text-slate-500">AI Score</p>
+              <p className="text-lg font-semibold text-slate-900">
+                {gadget.aiScore != null ? gadget.aiScore : "--"}
+              </p>
+            </div>
+          </div>
+        )}
+
         <div className="mt-4 grid grid-cols-3 gap-2">
           <SpecsLine icon={BatteryCharging} value={gadget.battery || "--"} label={gadget.category === "Phones" ? "mAh" : "Wh"} />
           <SpecsLine icon={MemoryStick} value={`${gadget.ram}GB`} label="RAM" />
-          <SpecsLine icon={Gauge} value={`${gadget.trustScore}%`} label="Rank" />
+          <SpecsLine icon={Gauge} value={`${gadget.trustScore}%`} label="Trust" />
         </div>
 
         {listLayout ? (
