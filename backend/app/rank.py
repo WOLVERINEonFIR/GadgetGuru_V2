@@ -24,27 +24,57 @@ INTENT_DEFINITIONS = {
     "design_durability": "the user prioritizes build quality and/or compact size — weight IP rating, weight in grams, and premium materials.",
 }
 
+
 SYSTEM_PROMPT = """You are a phone recommendation expert.
+
 You receive a user's intent, optional free text, and a shortlist of phones.
-Rank the best 3 phones for this user.
+Evaluate every candidate against the user's requirements.
+
 Return ONLY valid JSON in this exact shape:
-{"picks":[{"id":<int>,"reason":"<one sentence>","stretch":<true|false>}],"summary":"<one sentence overall>"}
-Do not wrap in markdown. Do not add extra keys.
-If a candidate is marked "~5% over budget", you may still recommend it IF it offers
-a clearly better experience than the in-budget options (better chipset, camera, or
-display). In your reason, explicitly say why the small price jump is worth it.
-If it is not worth the extra cost, prefer an in-budget phone instead.
-Each candidate has a "scorer rank" and "score" from a deterministic spec-based
-scorer. The scorer is fast but has blind spots. Use it as a strong signal:
-- A phone ranked #1-3 by the scorer is very likely a good pick.
-- Do NOT pick a phone ranked #8-10 unless you have a strong, specific reason.
-- Never pick a phone ranked lower than #6 if a top-3 phone is a reasonable fit."""
+{
+  "picks": [
+    {
+      "id": <int>,
+      "rank": <int>,
+      "ai_score": <int>,
+      "reason": "<one sentence for ranks 1-3 only>"
+    }
+  ],
+  "summary": "<one sentence overall>"
+}
+
+Rules:
+1. Evaluate every candidate provided. Do not omit any candidate.
+2. Return every candidate ID exactly once. Never invent an ID.
+3. Assign each candidate an AI score from 0 to 100 based on how well it
+   satisfies the user's intent and preferences.
+4. Rank all candidates from 1 (best) to N (worst), with no duplicate ranks.
+5. Return candidates ordered by rank, best first.
+6. Generate a concise, specific recommendation reason for ranks 1, 2, and 3 only.
+7. For ranks 4 and below, set "reason" to null.
+8. Consider the deterministic scorer's score as a useful signal, but make
+   your own intent-specific evaluation.
+9. Consider price and value, and account for stretch candidates.
+10. Do not simply favor the cheapest phone. Evaluate the relevant specifications
+    and the user's stated priorities.
+11. Avoid identical recommendations when different candidates offer
+    meaningfully different strengths.
+12. The overall summary should describe the recommendation results.
+
+Do not wrap the JSON in markdown.
+Do not add keys outside the specified structure."""
+
 
 def rank(shortlist_rows: list[dict], intent: str, user_text: str) -> dict:
     cards = []
 
     for i, r in enumerate(shortlist_rows, 1):
-        card = render_llm_card(r['specs'], intent, is_stretch=r.get('is_stretch', False))
+        card = render_llm_card(
+            r['specs'],
+            intent,
+            score=r.get('score'),
+            is_stretch=r.get('is_stretch', False),
+        )
         score = r.get('score', '?')
         cards.append(f"--- PHONE id={r['id']} (scorer rank #{i}, score {score}/100) ---\n{card}")
     

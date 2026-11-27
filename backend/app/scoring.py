@@ -256,7 +256,7 @@ def _score_performance(specs):
         "midrange": 25,
         "budget_mid": 18,
         "budget": 10,
-    }.get(chipset_tier, 18)
+    }.get(chipset_tier, 10)
 
     gpu_tier = derive_gpu_tier(_get_gpu(specs), fallback=chipset_tier)
     score += {
@@ -265,7 +265,7 @@ def _score_performance(specs):
         "upper_mid": 18,
         "midrange": 12,
         "budget": 5,
-    }.get(gpu_tier, 12)
+    }.get(gpu_tier, 5)
 
     ram = _get_max_ram(specs)
     if ram is not None:
@@ -279,6 +279,10 @@ def _score_performance(specs):
             score += 8
         else:
             score += 4
+
+        net = str((specs.get("connectivity") or {}).get("network_technology") or "")
+        if net and "5g" not in net.lower():
+            score -= 6
 
     return clamp_score(score)
 
@@ -310,7 +314,7 @@ def _score_gaming(specs):
 
 
 def _score_camera(specs):
-    """Main sensor MP + sensor size + OIS + lens variety."""
+    """Main sensor + ISP/chipset tier + OIS + lens variety + video/selfie."""
     lenses, rear_module = _get_rear_lenses(specs)
     if not lenses:
         return 0
@@ -320,6 +324,7 @@ def _score_camera(specs):
     has_ultrawide = False
     has_tele = False
     has_periscope = False
+    tele_ois = False
 
     for lens in lenses:
         if not isinstance(lens, dict):
@@ -333,56 +338,74 @@ def _score_camera(specs):
         ltype = str(lens.get("type") or "").lower()
         if "ultra" in ltype:
             has_ultrawide = True
-        if "telephoto" in ltype or "periscope" in ltype:
-            has_tele = True
         if "periscope" in ltype:
             has_periscope = True
+            if lens.get("ois") is True:
+                tele_ois = True
+        elif "telephoto" in ltype:
+            has_tele = True
+            if lens.get("ois") is True:
+                tele_ois = True
 
     score = 0
 
-    # Main sensor MP — capped (200MP is not 4x better than 50MP)
+    # 1. Main sensor MP (max 22)
     if main_mp >= 200:
-        score += 28
+        score += 22
     elif main_mp >= 108:
-        score += 25
-    elif main_mp >= 64:
-        score += 21
-    elif main_mp >= 50:
         score += 19
     elif main_mp >= 48:
         score += 17
-    elif main_mp >= 32:
-        score += 13
     elif main_mp >= 12:
-        score += 9
+        score += 13
 
-    # Sensor size — bigger is better
+    # 2. Sensor size with flagship fallback when OEM omits spec (max 18)
+    chipset, _ = _get_chipset(specs)
+    chip_tier = derive_chipset_tier(chipset)
     if best_fraction >= (1 / 1.3):
-        score += 20
+        score += 18
     elif best_fraction >= (1 / 1.5):
-        score += 16
+        score += 15
     elif best_fraction >= (1 / 1.7):
         score += 12
-    elif best_fraction >= (1 / 2):
+    elif best_fraction > 0:
         score += 8
+    else:
+        # Fallback for Apple/Samsung/Google when sensor_size is omitted
+        score += 14 if chip_tier in ("ultimate", "flagship") else 8
 
-    # OIS
+    # 3. ISP / Computational Photography proxy via chipset tier (max 18)
+    score += {
+        "ultimate": 18,
+        "flagship": 16,
+        "upper_mid": 11,
+        "midrange": 7,
+    }.get(chip_tier, 5)
+
+    # 4. OIS (main + bonus for stabilized telephoto) (max 18)
     any_ois = (
         (specs.get("cameras", {}) or {}).get("overall_ois_claim") is True
         or any(l.get("ois") is True for l in lenses)
     )
     if any_ois:
-        score += 15
+        score += 14
+    if tele_ois:
+        score += 4
 
-    # Lens variety
+    # 5. Lens variety — mutually exclusive tele vs periscope (max 24)
     if has_ultrawide:
-        score += 6
-    if has_tele:
-        score += 9
+        score += 7
     if has_periscope:
-        score += 8
+        score += 14
+    elif has_tele:
+        score += 11
+    # Bonus if rear module supports 4K60+ video
+    video_str = str((specs.get("cameras", {}) or {}).get("rear_video") or "").lower()
+    if "4k@60" in video_str or "4k 60" in video_str or "8k" in video_str:
+        score += 3
 
     return clamp_score(score)
+
 
 
 def _score_display(specs):
@@ -530,50 +553,48 @@ def _score_battery(specs):
 
 
 def _score_build(specs):
-    """Weight + IP rating + premium materials."""
+    """Weight + IP rating + premium materials + screen protection (100-pt scale)."""
     phys = specs.get("physical", {}) or {}
     score = 0
 
-    # Lighter = better, with sane bounds (150g great, 250g poor)
+    # 1. Weight (max 30)
     weight = _to_float(phys.get("weight_g"))
     if weight is not None:
-        if weight <= 170:
-            score += 30
-        elif weight <= 185:
-            score += 25
-        elif weight <= 200:
-            score += 18
-        elif weight <= 220:
-            score += 10
-        elif weight <= 240:
-            score += 4
+        if weight <= 170: score += 30
+        elif weight <= 185: score += 25
+        elif weight <= 200: score += 18
+        elif weight <= 220: score += 10
+        elif weight <= 240: score += 4
 
+    # 2. IP Rating (max 35)
     ip = str(((phys.get("water_resistance") or {}).get("rating")) or "").upper()
-    if ip.startswith("IP68") or ip.startswith("IP69"):
-        score += 35
-    elif ip.startswith("IP67"):
-        score += 28
-    elif ip.startswith("IP66"):
-        score += 22
-    elif ip.startswith("IP65"):
-        score += 16
-    elif ip.startswith("IP54") or ip.startswith("IP53"):
-        score += 10
-    elif ip.startswith("IP52") or ip.startswith("IPX"):
-        score += 5
+    if ip.startswith("IP68") or ip.startswith("IP69"): score += 35
+    elif ip.startswith("IP67"): score += 28
+    elif ip.startswith("IP66"): score += 22
+    elif ip.startswith("IP65"): score += 16
+    elif ip.startswith("IP54") or ip.startswith("IP53"): score += 10
+    elif ip.startswith("IP52") or ip.startswith("IPX"): score += 5
 
+    # 3. Chassis Materials (max 22)
     mats = phys.get("materials", {}) or {}
     front = str(mats.get("front_material") or "").lower()
     back = str(mats.get("back_material") or "").lower()
     frame = str(mats.get("frame_material") or "").lower()
     if "glass" in front and "glass" in back and any(m in frame for m in ("aluminum", "titanium", "metal")):
-        score += 20
+        score += 22
     elif "glass" in back or "titanium" in back or "ceramic" in back:
-        score += 14
+        score += 15
     elif "aluminum" in frame or "metal" in frame:
-        score += 8
+        score += 9
+
+    # 4. Flagship Display Glass Protection (max 13)
+    if any(k in front for k in ("armor", "ceramic shield", "victus", "dragon crystal", "shield glass")):
+        score += 13
+    elif "gorilla" in front:
+        score += 7
 
     return clamp_score(score)
+
 
 
 def _score_software(specs):
@@ -620,7 +641,7 @@ INTENT_WEIGHTS = {
     "performance_gaming": {"performance": 0.45, "gaming": 0.30, "display": 0.10, "battery": 0.10, "build": 0.05, "software": 0.00, "camera": 0.00},
     "camera_creation":    {"performance": 0.08, "gaming": 0.00, "camera": 0.65, "display": 0.12, "battery": 0.05, "build": 0.05, "software": 0.05},
     "battery_endurance":  {"performance": 0.05, "gaming": 0.00, "camera": 0.00, "display": 0.10, "battery": 0.75, "build": 0.05, "software": 0.05},
-    "everyday_value":     {"performance": 0.20, "gaming": 0.10, "camera": 0.20, "display": 0.20, "battery": 0.15, "build": 0.10, "software": 0.05},
+    "everyday_value":     {"performance": 0.18, "gaming": 0.02, "camera": 0.20,"display": 0.20, "battery": 0.15, "build": 0.10, "software": 0.15},
     "media_productivity": {"performance": 0.10, "gaming": 0.00, "camera": 0.05, "display": 0.55, "battery": 0.20, "build": 0.05, "software": 0.05},
     "design_durability":  {"performance": 0.05, "gaming": 0.00, "camera": 0.05, "display": 0.10, "battery": 0.05, "build": 0.65, "software": 0.10},
 }
@@ -635,16 +656,43 @@ def score_phone_v2(specs, intent):
     return round(total, 1), scores
 
 
-def score_and_rank(phones, intent, top_n=10):
+def score_and_rank(phones, intent, top_n=20, price_max=None):
     """
     Score each phone by intent, sort desc, return top_n.
-    `phones` is a list of dicts with at least {id, specs, ...}.
+    `phones` is a list of dicts with at least {id, specs, price_min_inr, ...}.
     Returns the same dicts with 'score' and 'scores' fields added.
     """
+    if not phones:
+        return []
+
+    budget_ceiling = price_max or max(
+        (_to_float(p.get("price_min_inr")) or 0) for p in phones
+    )
+
     scored = []
     for p in phones:
-        total, subs = score_phone_v2(p.get("specs") or {}, intent)
+        specs = p.get("specs") or {}
+        total, subs = score_phone_v2(specs, intent)
+
+        # 1. Proportional price-efficiency boost for everyday_value (works across all budget tiers)
+        if intent == "everyday_value" and budget_ceiling > 0:
+            price = _to_float(p.get("price_min_inr")) or budget_ceiling
+            headroom = max(0.0, min(1.0, (budget_ceiling - price) / budget_ceiling))
+            total = round(min(100.0, total * (1.0 + headroom * 0.10)), 1)
+
+        # 2. Screen-size adjustment for media_productivity
+        if intent == "media_productivity":
+            disp = (specs.get("displays") or [{}])[0]
+            inches = _to_float(disp.get("size_inches")) or 0
+            if inches >= 6.7:
+                total = round(min(100.0, total + 3.0), 1)
+            elif 0 < inches < 6.45:
+                total = round(max(0.0, total - 4.0), 1)
+
+
+        # Append AFTER all adjustments to `total` are finished
         enriched = {**p, "score": total, "scores": subs}
         scored.append(enriched)
-    scored.sort(key=lambda x: -x["score"])
+
+    scored.sort(key=lambda x: (-x["score"], _to_float(x.get("price_min_inr")) or 0))
     return scored[:top_n]

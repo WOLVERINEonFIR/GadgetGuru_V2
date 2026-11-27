@@ -1,28 +1,55 @@
-import json
-
-def render_llm_card(specs: dict, intent: str, is_stretch: bool = False) -> str:
+def render_llm_card(
+    specs: dict,
+    intent: str,
+    score: float | None = None,
+    tags: list[str] | None = None,
+    rag_summary: dict | None = None,
+    is_stretch: bool = False,
+) -> str:
     lines = []
     ident = specs.get("identity", {})
 
-    brand = ident.get('brand', '')
-    model = ident.get('model_name', '')
+    brand = ident.get("brand", "")
+    model = ident.get("model_name", "")
     title = model if model.lower().startswith(brand.lower()) else f"{brand} {model}"
     if is_stretch:
-        title += " [STRETCH — about 5% over budget]"
-    lines.append(title.strip())
+        title += " [STRETCH — ~5% over budget]"
+    lines.append(f"### {title.strip()}")
 
+    # ---- Score, Price & Archetype Tags ----
+    meta_bits = []
     f = specs.get("derived", {}).get("filter", {})
     if f.get("price_min_inr"):
-        lines.append(f"Price: Rs.{f['price_min_inr']}")
+        meta_bits.append(f"Price: Rs.{f['price_min_inr']:,}")
+    if score is not None:
+        meta_bits.append(f"Intent Score ({intent}): {score}/100")
+    if meta_bits:
+        lines.append(" | ".join(meta_bits))
+    if tags:
+        lines.append("Strength Profile: " + ", ".join(tags))
 
-    # ---- Performance ----
+    # ---- Performance & Memory ----
     perf = specs.get("performance", {})
     chip = perf.get("chipset", {}).get("variants", [])
+    perf_bits = []
     if chip:
-        lines.append(f"Chipset: {chip[0].get('model')} ({chip[0].get('process_nm')}nm)")
-    for b in perf.get("benchmark_results", []):
-        if b.get('test_name') in ('AnTuTu', 'GeekBench'):
-            lines.append(f"{b.get('test_name')} {b.get('version') or ''}: {b.get('score')}")
+        perf_bits.append(f"{chip[0].get('model')} ({chip[0].get('process_nm')}nm)")
+    mem = specs.get("memory", {})
+    if mem.get("ram_gb_options") or mem.get("storage_gb_options"):
+        ram_opt = mem.get("ram_gb_options") or []
+        sto_opt = mem.get("storage_gb_options") or []
+        if ram_opt and sto_opt:
+            perf_bits.append(f"Base {min(ram_opt)}GB/{min(sto_opt)}GB")
+    if perf_bits:
+        lines.append("Performance: " + " | ".join(perf_bits))
+
+    bench_bits = [
+        f"{b.get('test_name')} {b.get('version') or ''}: {b.get('score')}".strip()
+        for b in perf.get("benchmark_results", [])
+        if b.get("test_name") in ("AnTuTu", "GeekBench")
+    ]
+    if bench_bits:
+        lines.append("Benchmarks: " + " | ".join(bench_bits))
 
     # ---- Battery ----
     bat = specs.get("battery", {})
@@ -39,7 +66,8 @@ def render_llm_card(specs: dict, intent: str, is_stretch: bool = False) -> str:
     lines.append(bat_line)
 
     # ---- Camera ----
-    cam_mods = specs.get("cameras", {}).get("modules", [])
+    cams = specs.get("cameras", {})
+    cam_mods = cams.get("modules", [])
     rear = next((m for m in cam_mods if m.get("position") == "rear"), None)
     if rear:
         lens_bits = []
@@ -51,7 +79,10 @@ def render_llm_card(specs: dict, intent: str, is_stretch: bool = False) -> str:
                 bit += " OIS"
             lens_bits.append(bit)
         if lens_bits:
-            lines.append("Rear camera: " + "; ".join(lens_bits))
+            cam_line = "Rear camera: " + "; ".join(lens_bits)
+            if intent == "camera_creation" and cams.get("rear_video"):
+                cam_line += f" | Video: {cams.get('rear_video')}"
+            lines.append(cam_line)
 
     # ---- Display ----
     disp = (specs.get("displays") or [{}])[0]
@@ -67,16 +98,18 @@ def render_llm_card(specs: dict, intent: str, is_stretch: bool = False) -> str:
     if disp_bits:
         lines.append("Display: " + ", ".join(disp_bits))
 
-    # ---- Build ----
+    # ---- Build (handles both flat and nested materials dict) ----
     phys = specs.get("physical", {})
+    mats = phys.get("materials") or {}
     build_bits = []
     if phys.get("weight_g"):
         build_bits.append(f"{phys.get('weight_g')}g")
     wr = (phys.get("water_resistance") or {}).get("rating")
     if wr:
         build_bits.append(wr)
-    if phys.get("frame_material"):
-        build_bits.append(phys.get("frame_material"))
+    frame = phys.get("frame_material") or mats.get("frame_material")
+    if frame:
+        build_bits.append(frame)
     if build_bits:
         lines.append("Build: " + ", ".join(build_bits))
 
@@ -90,5 +123,14 @@ def render_llm_card(specs: dict, intent: str, is_stretch: bool = False) -> str:
         sw_bits.append(f"{upd} major OS updates")
     if sw_bits:
         lines.append("Software: " + ", ".join(sw_bits))
+
+    # ---- RAG Review Context (Phase 2 — commented out) ----
+    # if rag_summary:
+    #     if rag_summary.get("pros"):
+    #         lines.append("Reviewer Pros: " + "; ".join(rag_summary["pros"]))
+    #     if rag_summary.get("cons"):
+    #         lines.append("Reviewer Cons: " + "; ".join(rag_summary["cons"]))
+    #     if rag_summary.get("verdict"):
+    #         lines.append("Review Verdict: " + rag_summary["verdict"])
 
     return "\n".join(lines)

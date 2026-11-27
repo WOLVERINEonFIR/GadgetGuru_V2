@@ -48,37 +48,60 @@ def recommend(req: RecommendRequest):
         raise HTTPException(400, "price_min > price_max")
 
     with psycopg.connect(DATABASE_URL, sslmode="require") as conn:
-        # 1. SQL: cheap price-range filter → up to 200 candidates
-        candidates = shortlist(conn, req.intent, req.price_min, req.price_max, limit=200)
+        candidates = shortlist(
+            conn, req.intent, req.price_min, req.price_max,
+            limit=200, allow_stretch=req.allow_stretch,
+        )
         if not candidates:
             raise HTTPException(404, "No phones matched the price range")
 
-        # 2. Python scorer: intent-aware heuristic → top 10
-        top10 = score_and_rank(candidates, req.intent, top_n=10)
+        # Separate in-budget from stretch so we can cap stretch at 2
+        in_budget = [c for c in candidates if not c.get("is_stretch")]
+        stretch_pool = [c for c in candidates if c.get("is_stretch")]
 
-        # 3. Gemini: re-rank the 10, pick best 3 with reasons
+        # Score in-budget: take top 8
+        top_in_budget = score_and_rank(in_budget, req.intent, top_n=8, price_max=req.price_max)
+
+        # Score stretch: take top 2, but only if they're genuinely competitive
+        # (must score within 15 points of the #1 in-budget phone)
+        stretch_picks = []
+        if stretch_pool and top_in_budget:
+            stretch_scored = score_and_rank(stretch_pool, req.intent, top_n=2, price_max=req.price_max)
+            best_score = top_in_budget[0]["score"]
+            stretch_picks = [s for s in stretch_scored if s["score"] >= best_score - 15]
+
+        top10 = top_in_budget + stretch_picks[:2]
+
         try:
             ranking = rank(top10, req.intent, req.user_text or "")
         except Exception as e:
             raise HTTPException(502, f"LLM ranking failed: {e}")
 
-        # 4. Join Gemini's picks back to full phone data
+
         by_id = {r["id"]: r for r in top10}
         picks = []
+
         for p in ranking.get("picks", []):
             phone = by_id.get(p["id"])
             if not phone:
                 continue
+
             picks.append({
+                "rank": p["rank"],
                 "id": phone["id"],
                 "brand": phone["brand"],
                 "model_name": phone["model_name"],
                 "price_min_inr": float(phone["price_min_inr"]),
-                "reason": p["reason"],
-                "specs": phone["specs"],
                 "score": phone.get("score"),
+                "ai_score": p["ai_score"],
+                "reason": p.get("reason") if p["rank"] <= 3 else None,
+                "specs": phone["specs"],
                 "scores": phone.get("scores"),
+                "is_stretch": phone.get("is_stretch", False),
             })
+
+        picks.sort(key=lambda p: p["rank"])
+
         return {
             "intent": req.intent,
             "summary": ranking.get("summary", ""),
